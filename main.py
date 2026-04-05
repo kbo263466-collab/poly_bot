@@ -2,59 +2,99 @@ import requests
 import os
 import smtplib
 import time
+import json
 from email.mime.text import MIMEText
 from email.header import Header
 from datetime import datetime
 
 def get_poly_data():
-    """获取 Polymarket 赔率（纯英精修版）"""
+    """获取 Polymarket 赔率（修复版）"""
     url = "https://gamma-api.polymarket.com/events?limit=10&active=true&closed=false"
     try:
         response = requests.get(url, timeout=15)
         data = response.json()
         report = "📊 POLYMARKET REAL-TIME ODDS\n"
         report += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        
-        for event in data:
+
+        if not isinstance(data, list):
+            return f"❌ Polymarket API 返回格式异常: {type(data)}\n"
+
+        for event in data[:10]:  # 最多显示10条
             title = event.get('title', 'N/A')
-            markets = event.get('markets', [{}])[0]
-            group = markets.get('groupNames', ['Yes', 'No'])
-            prices = markets.get('outcomePrices', ['0', '0'])
-            
-            # 格式化胜率：将 0.65 转换为更加直观的 65.0%
-            try:
-                p1 = f"{float(prices[0])*100:.1f}%" if prices else "0%"
-                p2 = f"{float(prices[1])*100:.1f}%" if len(prices) > 1 else "0%"
-                report += f"🔹 {title}\n"
-                report += f"   PROBABILITY: {group[0]} ({p1}) vs {group[1]} ({p2})\n\n"
-            except:
+            markets = event.get('markets', [])
+
+            if not markets or not isinstance(markets, list):
                 continue
-        return report
+
+            market = markets[0]
+            if not isinstance(market, dict):
+                continue
+
+            # groupNames 可能是 None
+            group = market.get('groupNames') or ['Yes', 'No']
+
+            # outcomePrices 可能是 JSON 字符串，如 '["0.65", "0.35"]'
+            prices_raw = market.get('outcomePrices', '["0", "0"]')
+            if isinstance(prices_raw, str):
+                try:
+                    prices = json.loads(prices_raw)
+                except json.JSONDecodeError:
+                    prices = ['0', '0']
+            else:
+                prices = prices_raw
+
+            # 确保 prices 是列表且有两个元素
+            if not isinstance(prices, list) or len(prices) < 2:
+                prices = ['0', '0']
+
+            try:
+                p1 = f"{float(prices[0])*100:.1f}%"
+                p2 = f"{float(prices[1])*100:.1f}%"
+                g1 = group[0] if len(group) > 0 else 'Yes'
+                g2 = group[1] if len(group) > 1 else 'No'
+                report += f"🔹 {title}\n"
+                report += f"   PROBABILITY: {g1} ({p1}) vs {g2} ({p2})\n\n"
+            except (ValueError, IndexError) as e:
+                report += f"🔹 {title}\n   [价格解析失败: {e}]\n\n"
+
+        return report if len(report) > 50 else "❌ 未获取到有效 Polymarket 数据\n"
     except Exception as e:
         return f"❌ Polymarket Data Error: {e}\n"
 
 def get_news_data():
-    """获取全球前沿新闻（带摘要增强版）"""
-    # 增加 pageSize 到 10，并尝试获取摘要
+    """获取全球前沿新闻（修复版）"""
     url = "https://newsapi.org/v2/top-headlines?language=en&pageSize=10&apiKey=02392437e56847849e7550f28e67f08b"
     try:
         response = requests.get(url, timeout=15)
-        articles = response.json().get('articles', [])
+        result = response.json()
+
+        # 检查 API 返回状态
+        if result.get('status') == 'error':
+            return f"❌ NewsAPI Error: {result.get('message', 'Unknown error')}\n"
+
+        articles = result.get('articles', [])
+        if not articles:
+            return "❌ 未获取到新闻数据\n"
+
         report = "🌍 GLOBAL FRONTIER NEWS SUMMARY\n"
         report += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        
-        for i, art in enumerate(articles, 1):
-            title = art.get('title', 'No Title')
-            source = art.get('source', {}).get('name', 'Unknown')
-            desc = art.get('description', 'No summary available.')
-            
+
+        for i, art in enumerate(articles[:10], 1):
+            title = art.get('title') or 'No Title'
+            source = art.get('source', {}).get('name') or 'Unknown'
+            desc = art.get('description') or 'No summary available.'
+
+            # 安全截断描述
+            if desc and len(desc) > 120:
+                desc = desc[:120] + '...'
+
             report += f"{i}. {title}\n"
             report += f"   Source: {source}\n"
-            # 只取简短摘要的前 100 个字符，保持排版整洁
-            report += f"   Brief: {desc[:120]}...\n\n"
+            report += f"   Brief: {desc}\n\n"
+
         return report
     except Exception as e:
-        return "❌ News Data Error\n"
+        return f"❌ News Data Error: {e}\n"
 
 def send_email(content):
     mail_host = "smtp.qq.com"
@@ -84,15 +124,24 @@ def send_email(content):
         return False
 
 if __name__ == "__main__":
-    # 重新组合逻辑：新闻在上，赔率在下
+    print("Starting bot...")
+
+    print("Fetching news...")
     news_part = get_news_data()
+    print(f"News length: {len(news_part)} chars")
+
+    print("Fetching polymarket...")
     poly_part = get_poly_data()
-    
+    print(f"Polymarket length: {len(poly_part)} chars")
+
     final_report = "PREMIUM DAILY INTELLIGENCE SUMMARY\n"
     final_report += "Generated by M4 Mac mini | " + datetime.now().strftime("%Y-%m-%d") + "\n"
     final_report += "━" * 40 + "\n\n"
     final_report += news_part + "\n"
     final_report += poly_part
     final_report += "\n[End of Report]"
-    
+
+    print(f"\nFinal report length: {len(final_report)} chars")
+    print("Sending email...")
+
     send_email(final_report)
