@@ -62,17 +62,18 @@ def get_poly_data():
         return f"❌ Polymarket Data Error: {e}\n"
 
 def get_news_data():
-    """获取全球前沿新闻（修复版）"""
-    url = "https://newsapi.org/v2/top-headlines?language=en&pageSize=10&apiKey=02392437e56847849e7550f28e67f08b"
+    """获取全球前沿新闻（使用 mediastack）"""
+    # mediastack 免费版使用 HTTP 而非 HTTPS
+    url = "http://api.mediastack.com/v1/news?access_key=9f80de54e9e55a04763b7c4d2961869c&languages=en&limit=10"
     try:
         response = requests.get(url, timeout=15)
         result = response.json()
 
         # 检查 API 返回状态
-        if result.get('status') == 'error':
-            return f"❌ NewsAPI Error: {result.get('message', 'Unknown error')}\n"
+        if result.get('error'):
+            return f"❌ Mediastack Error: {result.get('error', {}).get('message', 'Unknown error')}\n"
 
-        articles = result.get('articles', [])
+        articles = result.get('data', [])
         if not articles:
             return "❌ 未获取到新闻数据\n"
 
@@ -81,7 +82,7 @@ def get_news_data():
 
         for i, art in enumerate(articles[:10], 1):
             title = art.get('title') or 'No Title'
-            source = art.get('source', {}).get('name') or 'Unknown'
+            source = art.get('source') or 'Unknown'
             desc = art.get('description') or 'No summary available.'
 
             # 安全截断描述
