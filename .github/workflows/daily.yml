@@ -1,0 +1,29 @@
+name: Daily Report
+
+on:
+  schedule:
+    # 这里的第一个是 0:00 UTC (北京时间 08:00)
+    - cron: '0 0 * * *'
+    # 这里的第二个是 4:30 UTC (北京时间 12:30)
+    - cron: '30 4 * * *'
+  workflow_dispatch:      # 保留手动触发按钮，方便随时测试
+
+jobs:
+  run_bot:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Run script
+        env:
+          MAIL_PASS: ${{ secrets.MAIL_PASS }}
+        run: python main.py
