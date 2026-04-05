@@ -1,0 +1,86 @@
+name: Test APIs
+
+on:
+  workflow_dispatch:  # 手动触发
+
+jobs:
+  test_apis:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Test NewsAPI
+        run: |
+          python3 << 'EOF'
+          import requests
+          print("=== Testing NewsAPI ===")
+          try:
+              url = "https://newsapi.org/v2/top-headlines?language=en&pageSize=10&apiKey=02392437e56847849e7550f28e67f08b"
+              resp = requests.get(url, timeout=15)
+              print(f"Status: {resp.status_code}")
+              data = resp.json()
+              print(f"API Status: {data.get('status')}")
+              if data.get('status') == 'error':
+                  print(f"Error: {data.get('message')}")
+              else:
+                  articles = data.get('articles', [])
+                  print(f"Articles count: {len(articles)}")
+                  if articles:
+                      print(f"First title: {articles[0].get('title')}")
+                      print(f"First desc: {articles[0].get('description')[:100]}...")
+                  print("✅ NewsAPI OK")
+          except Exception as e:
+              print(f"❌ Error: {e}")
+          EOF
+
+      - name: Test Polymarket API
+        run: |
+          python3 << 'EOF'
+          import requests
+          import json
+          print("\n=== Testing Polymarket API ===")
+          try:
+              url = "https://gamma-api.polymarket.com/events?limit=10&active=true&closed=false"
+              resp = requests.get(url, timeout=15)
+              print(f"Status: {resp.status_code}")
+              data = resp.json()
+              if isinstance(data, list):
+                  print(f"Events count: {len(data)}")
+                  if data:
+                      event = data[0]
+                      print(f"First event title: {event.get('title')}")
+                      markets = event.get('markets', [])
+                      if markets:
+                          market = markets[0]
+                          prices = market.get('outcomePrices')
+                          print(f"outcomePrices: {prices} (type: {type(prices).__name__})")
+                          if isinstance(prices, str):
+                              try:
+                                  parsed = json.loads(prices)
+                                  print(f"Parsed prices: {parsed}")
+                              except:
+                                  print("Failed to parse as JSON")
+                          group = market.get('groupNames')
+                          print(f"groupNames: {group}")
+                  print("✅ Polymarket API OK")
+              else:
+                  print(f"Unexpected response type: {type(data)}")
+          except Exception as e:
+              print(f"❌ Error: {e}")
+          EOF
+
+      - name: Run full bot test
+        env:
+          MAIL_USER: ${{ secrets.MAIL_USER }}
+          MAIL_PASS: ${{ secrets.MAIL_PASS }}
+          MAIL_RECEIVER: ${{ secrets.MAIL_RECEIVER }}
+        run: python main.py
