@@ -1,99 +1,115 @@
 import requests
+import os
 import smtplib
+import time
 from email.mime.text import MIMEText
 from email.header import Header
-import os
-import logging
-import time
+from datetime import datetime
 
-# 配置日志
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
-
-# 配置信息 - 优先从环境变量读取
-CONFIG = {
-    'api_url': 'https://gamma-api.polymarket.com/events',
-    'api_params': {'limit': 10, 'active': True, 'sort': 'volume:desc'},
-    'mail_host': 'smtp.qq.com',
-    'mail_user': os.getenv('MAIL_USER', '42301759@qq.com'), 
-    'mail_pass': os.getenv('MAIL_PASS'), # 必须在 GitHub Secrets 中配置
-    'receivers': [os.getenv('MAIL_RECEIVER', '118094457@qq.com')], # 修改后的接收邮箱
-    'email_subject': '🌍 全球热门事件赔率日报'
-}
-
-def get_polymarket_data():
+def get_poly_data():
+    """获取 Polymarket 赔率并进行双语逻辑处理"""
+    url = "https://gamma-api.polymarket.com/events?limit=10&active=true&closed=false"
     try:
-        logger.info('开始获取 Polymarket 数据...')
-        # GitHub Actions 运行环境在海外，请求这个 API 会非常快
-        response = requests.get(CONFIG['api_url'], params=CONFIG['api_params'], timeout=15)
-        response.raise_for_status()
-        events = response.json()
+        response = requests.get(url, timeout=15)
+        data = response.json()
+        report = "【💰 Polymarket 全球热门事件赔率 (Bilingual)】\n"
+        report += "=" * 50 + "\n\n"
         
-        if not isinstance(events, list):
-            return '❌ 获取数据失败: API 返回数据格式错误'
-            
-        report_lines = [f"📈 Polymarket 热门趋势 ({time.strftime('%Y-%m-%d %H:%M')})\n", "="*40]
+        # 汉化映射词典
+        translations = {
+            "Presidential": "总统大选",
+            "Winner": "获胜者",
+            "Election": "选举",
+            "US": "美国",
+            "Federal": "联邦"
+        }
         
-        for event in events:
-            title = event.get('title', '未知事件')
-            report_lines.append(f"【事件】: {title}")
+        for event in data:
+            title_en = event.get('title', 'N/A')
+            title_cn = title_en
+            for eng, chn in translations.items():
+                title_cn = title_cn.replace(eng, chn)
             
-            markets = event.get('markets', [])
-            odds_str = ""
-            if markets:
-                outcomes = markets[0].get('outcomes', [])
-                prices = markets[0].get('outcomePrices', [])
-                if outcomes and prices:
-                    for o, p in zip(outcomes, prices):
-                        try:
-                            # p 是字符串格式的赔率，如 "0.55"
-                            prob = round(float(p) * 100, 1)
-                            odds_str += f"   - {o}: {prob}%\n"
-                        except: continue
+            markets = event.get('markets', [{}])[0]
+            group = markets.get('groupNames', ['Yes', 'No'])
+            prices = markets.get('outcomePrices', ['0', '0'])
             
-            if odds_str:
-                report_lines.append(odds_str.strip())
-            else:
-                desc = event.get('description', '暂无详细描述')[:60]
-                report_lines.append(f"   详情: {desc}...")
+            # 概率计算与容错处理
+            try:
+                c1 = f"{float(prices[0])*100:.1f}%" if prices else "N/A"
+                c2 = f"{float(prices[1])*100:.1f}%" if len(prices) > 1 else "N/A"
+            except:
+                c1, c2 = "N/A", "N/A"
             
-            report_lines.append("-" * 30)
-            
-        logger.info('成功解析数据')
-        return "\n".join(report_lines)
+            report += f"📍 {title_cn}\n"
+            report += f"   (EN: {title_en})\n"
+            report += f"   📊 胜率预期: {group[0]}({c1}) | {group[1]}({c2})\n\n"
+        return report
     except Exception as e:
-        logger.error(f"抓取失败: {e}")
-        return f"❌ 数据抓取异常: {e}"
+        return f"❌ 赔率数据抓取失败: {str(e)}\n"
+
+def get_news_data():
+    """获取全球前沿新闻"""
+    # 使用 NewsAPI 公共接口
+    url = "https://newsapi.org/v2/top-headlines?sources=google-news&pageSize=10&apiKey=02392437e56847849e7550f28e67f08b"
+    try:
+        response = requests.get(url, timeout=15)
+        articles = response.json().get('articles', [])
+        report = "【🌍 全球前沿热门新闻汇总 (Bilingual)】\n"
+        report += "=" * 50 + "\n"
+        report += "(注：以下为全球热点新闻摘要)\n\n"
+        
+        for i, art in enumerate(articles, 1):
+            title = art.get('title', 'No Title')
+            source = art.get('source', {}).get('name', 'Unknown')
+            report += f"{i}. {title} [{source}]\n\n"
+        return report
+    except Exception as e:
+        return "❌ 新闻数据抓取失败\n"
 
 def send_email(content):
-    # 检查授权码是否存在
-    if not CONFIG['mail_pass']:
-        logger.error("未检测到 MAIL_PASS 环境变量！请在 GitHub Secrets 中配置。")
+    """发送邮件（全加密变量保护版）"""
+    mail_host = "smtp.qq.com"
+    
+    # 从 GitHub Secrets 读取环境变量
+    mail_user = os.getenv("MAIL_USER")
+    mail_pass = os.getenv("MAIL_PASS")
+    mail_receiver = os.getenv("MAIL_RECEIVER")
+
+    # 安全检查
+    if not all([mail_user, mail_pass, mail_receiver]):
+        print("❌ 错误：环境变量 (USER/PASS/RECEIVER) 配置不全，请检查 GitHub Secrets。")
         return False
 
-    max_retries = 3
-    for attempt in range(max_retries):
-        try:
-            logger.info(f'邮件尝试发送... ({attempt+1}/{max_retries})')
-            message = MIMEText(content, 'plain', 'utf-8')
-            message['From'] = f"PolymarketBot <{CONFIG['mail_user']}>"
-            message['To'] = CONFIG['receivers'][0]
-            message['Subject'] = Header(CONFIG['email_subject'], 'utf-8')
+    now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
+    message = MIMEText(content, 'plain', 'utf-8')
+    message['From'] = f"M4_Bot_Reporter <{mail_user}>"
+    message['To'] = mail_receiver
+    message['Subject'] = Header(f"🌍 全球资讯双语日报 ({now_str})", 'utf-8')
 
-            # 连接 QQ 邮箱的 SSL 端口
-            server = smtplib.SMTP_SSL(CONFIG['mail_host'], 465, timeout=15)
-            server.login(CONFIG['mail_user'], CONFIG['mail_pass'])
-            server.sendmail(CONFIG['mail_user'], CONFIG['receivers'], message.as_string())
-            server.quit()
-            logger.info('✅ 邮件已发送至 118094457@qq.com')
+    # 重试机制
+    for attempt in range(3):
+        try:
+            smtp = smtplib.SMTP_SSL(mail_host, 465, timeout=15)
+            smtp.login(mail_user, mail_pass)
+            smtp.sendmail(mail_user, [mail_receiver], message.as_string())
+            smtp.quit()
+            print(f"✅ {now_str} 邮件已成功送达！")
             return True
         except Exception as e:
-            logger.warning(f"发送失败: {e}")
-            if attempt < max_retries - 1: 
-                logger.info("等待 10 秒后重试...")
-                time.sleep(10)
+            print(f"⚠️ 第 {attempt + 1} 次尝试失败: {e}")
+            time.sleep(5)
     return False
 
 if __name__ == "__main__":
-    content = get_polymarket_data()
-    send_email(content)
+    print("🚀 正在通过 M4 Mac 指令启动云端抓取任务...")
+    
+    # 数据汇总
+    news_part = get_news_data()
+    poly_part = get_poly_data()
+    
+    final_report = "您好！这是为您精心准备的全球双语日报：\n\n"
+    final_report += news_part + "\n" + "="*60 + "\n\n" + poly_part
+    final_report += "\n---\n本报告由 GitHub Actions 自动化生成。报告时间：" + datetime.now().strftime("%Y-%m-%d %H:%M")
+    
+    send_email(final_report)

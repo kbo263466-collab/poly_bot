@@ -25,5 +25,7 @@ jobs:
 
       - name: Run script
         env:
+          MAIL_USER: ${{ secrets.MAIL_USER }}
           MAIL_PASS: ${{ secrets.MAIL_PASS }}
+          MAIL_RECEIVER: ${{ secrets.MAIL_RECEIVER }}
         run: python main.py
